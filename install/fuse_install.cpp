@@ -48,7 +48,9 @@
 #define SDEXPRESS_0_TYPE_PATH "/sys/block/nvme0n1/device/transport"
 #define SDEXPRESS_BLK_0_PATH "/dev/block/nvme0n1p1"
 
-static constexpr const char* SDCARD_ROOT = "/data/media/0";
+using android::volmgr::VolumeInfo;
+using android::volmgr::VolumeManager;
+
 // How long (in seconds) we wait for the fuse-provided package file to
 // appear, before timing out.
 static constexpr int SDCARD_INSTALL_TIMEOUT = 10;
@@ -65,8 +67,6 @@ static void SetSdcardUpdateBootloaderMessage() {
 
 // Returns the selected filename, or an empty string.
 static std::string BrowseDirectory(const std::string& path, Device* device, RecoveryUI* ui) {
-  ensure_path_mounted(path);
-
   std::unique_ptr<DIR, decltype(&closedir)> d(opendir(path.c_str()), closedir);
   if (!d) {
     PLOG(ERROR) << "error opening " << path;
@@ -147,12 +147,6 @@ static bool StartInstallPackageFuse(std::string_view path) {
   if (!fuse_data_provider || !fuse_data_provider->Valid()) {
     LOG(ERROR) << "Failed to create fuse data provider.";
     return false;
-  }
-
-  if (android::base::StartsWith(path, SDCARD_ROOT)) {
-    // The installation process expects to find the sdcard unmounted. Unmount it with MNT_DETACH so
-    // that our open file continues to work but new references see it as unmounted.
-    umount2("/data", MNT_DETACH);
   }
 
   return run_fuse_sideload(std::move(fuse_data_provider)) == 0;
@@ -296,15 +290,13 @@ InstallResult ApplyFromSdcard(Device* device) {
   auto ui = device->GetUI();
   ui->Print("Update via sdcard. Mounting sdcard\n");
 
-  if (do_sdcard_mount() != 0) {
-    LOG(ERROR) << "\nFailed to mount sdcard\n";
+  if (!VolumeManager::Instance()->volumeMount(vi.mId)) {
     return INSTALL_NONE;
   }
 
-  std::string path = BrowseDirectory(SDCARD_ROOT, device, ui);
+  std::string path = BrowseDirectory(vi.mPath, device, ui);
   if (path.empty()) {
-    LOG(ERROR) << "\n-- No package file selected.\n";
-    ensure_path_unmounted(SDCARD_ROOT);
+    VolumeManager::Instance()->volumeUnmount(vi.mId);
     return INSTALL_NONE;
   }
 
@@ -317,6 +309,7 @@ InstallResult ApplyFromSdcard(Device* device) {
   SetSdcardUpdateBootloaderMessage();
 
   auto result = InstallWithFuseFromPath(path, device);
-  ensure_path_unmounted(SDCARD_ROOT);
+
+  VolumeManager::Instance()->volumeUnmount(vi.mId);
   return result;
 }
