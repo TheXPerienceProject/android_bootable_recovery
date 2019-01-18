@@ -336,8 +336,8 @@ int update_verifier(int argc, char** argv) {
       LOG(WARNING) << "dm-verity in disabled mode; marking without verification.";
       skip_verification = true;
     } else if (verity_mode != "enforcing") {
-      LOG(ERROR) << "Unexpected dm-verity mode: " << verity_mode << ", expecting enforcing.";
-      return reboot_device();
+      LOG(WARNING) << "Unexpected dm-verity mode: " << verity_mode << ", expecting enforcing.";
+      skip_verification = true;
     }
 
     if (!skip_verification) {
