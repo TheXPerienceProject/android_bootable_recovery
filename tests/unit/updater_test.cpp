@@ -56,6 +56,11 @@
 
 using namespace std::string_literals;
 
+// For tune2fs
+extern "C" {
+    const char* program_name = "updater";
+}
+
 using PackageEntries = std::unordered_map<std::string, std::string>;
 
 static void expect(const char* expected, const std::string& expr_str, CauseCode cause_code,
