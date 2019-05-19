@@ -49,16 +49,16 @@
 #include <selinux/selinux.h>
 
 #include "common.h"
-#include "device.h"
 #include "fastboot/fastboot.h"
-#include "logging.h"
-#include "minadbd/minadbd.h"
+#include "install/wipe_data.h"
+#include "otautil/logging.h"
 #include "otautil/paths.h"
+#include "otautil/roots.h"
 #include "otautil/sysutil.h"
 #include "recovery.h"
-#include "roots.h"
-#include "stub_ui.h"
-#include "ui.h"
+#include "recovery_ui/device.h"
+#include "recovery_ui/stub_ui.h"
+#include "recovery_ui/ui.h"
 
 static constexpr const char* COMMAND_FILE = "/cache/recovery/command";
 static constexpr const char* LOCALE_FILE = "/cache/recovery/last_locale";
@@ -155,9 +155,11 @@ static std::vector<std::string> get_args(const int argc, char** const argv) {
   }
 
   // Finally, if no arguments were specified, check whether we should boot
-  // into fastboot.
+  // into fastboot or rescue mode.
   if (args.size() == 1 && boot_command == "boot-fastboot") {
     args.emplace_back("--fastboot");
+  } else if (args.size() == 1 && boot_command == "boot-rescue") {
+    args.emplace_back("--rescue");
   }
 
   return args;
@@ -176,6 +178,12 @@ static std::string load_locale_from_cache() {
   }
 
   return android::base::Trim(content);
+}
+
+// Sets the usb config to 'state'.
+static bool SetUsbConfig(const std::string& state) {
+  android::base::SetProperty("sys.usb.config", state);
+  return android::base::WaitForProperty("sys.usb.state", state);
 }
 
 static void ListenRecoverySocket(RecoveryUI* ui, std::atomic<Device::BuiltinAction>& action) {
@@ -217,9 +225,10 @@ static void ListenRecoverySocket(RecoveryUI* ui, std::atomic<Device::BuiltinActi
 }
 
 static void redirect_stdio(const char* filename) {
-  int pipefd[2];
-  if (pipe(pipefd) == -1) {
-    PLOG(ERROR) << "pipe failed";
+  android::base::unique_fd pipe_read, pipe_write;
+  // Create a pipe that allows parent process sending logs over.
+  if (!android::base::Pipe(&pipe_read, &pipe_write)) {
+    PLOG(ERROR) << "Failed to create pipe for redirecting stdio";
 
     // Fall back to traditional logging mode without timestamps. If these fail, there's not really
     // anywhere to complain...
@@ -233,7 +242,7 @@ static void redirect_stdio(const char* filename) {
 
   pid_t pid = fork();
   if (pid == -1) {
-    PLOG(ERROR) << "fork failed";
+    PLOG(ERROR) << "Failed to fork for redirecting stdio";
 
     // Fall back to traditional logging mode without timestamps. If these fail, there's not really
     // anywhere to complain...
@@ -246,8 +255,8 @@ static void redirect_stdio(const char* filename) {
   }
 
   if (pid == 0) {
-    /// Close the unused write end.
-    close(pipefd[1]);
+    // Child process reads the incoming logs and doesn't write to the pipe.
+    pipe_write.reset();
 
     auto start = std::chrono::steady_clock::now();
 
@@ -255,15 +264,13 @@ static void redirect_stdio(const char* filename) {
     FILE* log_fp = fopen(filename, "ae");
     if (log_fp == nullptr) {
       PLOG(ERROR) << "fopen \"" << filename << "\" failed";
-      close(pipefd[0]);
       _exit(EXIT_FAILURE);
     }
 
-    FILE* pipe_fp = fdopen(pipefd[0], "r");
+    FILE* pipe_fp = android::base::Fdopen(std::move(pipe_read), "r");
     if (pipe_fp == nullptr) {
       PLOG(ERROR) << "fdopen failed";
       check_and_fclose(log_fp, filename);
-      close(pipefd[0]);
       _exit(EXIT_FAILURE);
     }
 
@@ -283,25 +290,23 @@ static void redirect_stdio(const char* filename) {
 
     PLOG(ERROR) << "getline failed";
 
+    fclose(pipe_fp);
     free(line);
     check_and_fclose(log_fp, filename);
-    close(pipefd[0]);
     _exit(EXIT_FAILURE);
   } else {
     // Redirect stdout/stderr to the logger process. Close the unused read end.
-    close(pipefd[0]);
+    pipe_read.reset();
 
     setbuf(stdout, nullptr);
     setbuf(stderr, nullptr);
 
-    if (dup2(pipefd[1], STDOUT_FILENO) == -1) {
+    if (dup2(pipe_write.get(), STDOUT_FILENO) == -1) {
       PLOG(ERROR) << "dup2 stdout failed";
     }
-    if (dup2(pipefd[1], STDERR_FILENO) == -1) {
+    if (dup2(pipe_write.get(), STDERR_FILENO) == -1) {
       PLOG(ERROR) << "dup2 stderr failed";
     }
-
-    close(pipefd[1]);
   }
 }
 
@@ -318,16 +323,6 @@ int main(int argc, char** argv) {
   __android_log_pmsg_file_read(LOG_ID_SYSTEM, ANDROID_LOG_INFO, filter, logbasename, &do_rotate);
   // Take action to refresh pmsg contents
   __android_log_pmsg_file_read(LOG_ID_SYSTEM, ANDROID_LOG_INFO, filter, logrotate, &do_rotate);
-
-  // If this binary is started with the single argument "--adbd", instead of being the normal
-  // recovery binary, it turns into kind of a stripped-down version of adbd that only supports the
-  // 'sideload' command.  Note this must be a real argument, not anything in the command file or
-  // bootloader control block; the only way recovery should be run with this argument is when it
-  // starts a copy of itself from the apply_from_adb() function.
-  if (argc == 2 && strcmp(argv[1], "--adbd") == 0) {
-    minadbd_main();
-    return 0;
-  }
 
   time_t start = time(nullptr);
 
@@ -430,6 +425,10 @@ int main(int argc, char** argv) {
     device->RemoveMenuItemForAction(Device::ENTER_FASTBOOT);
   }
 
+  if (!is_ro_debuggable()) {
+    device->RemoveMenuItemForAction(Device::ENTER_RESCUE);
+  }
+
   ui->SetBackground(RecoveryUI::NONE);
   if (show_text) ui->ShowText(true);
 
@@ -441,6 +440,8 @@ int main(int argc, char** argv) {
   if (!sehandle) {
     ui->Print("Warning: No file_contexts\n");
   }
+
+  SetLoggingSehandle(sehandle);
 
   std::atomic<Device::BuiltinAction> action;
   std::thread listener_thread(ListenRecoverySocket, ui, std::ref(action));
@@ -471,6 +472,7 @@ int main(int argc, char** argv) {
     switch (ret) {
       case Device::SHUTDOWN:
         ui->Print("Shutting down...\n");
+        // TODO: Move all the reboots to reboot(), which should conditionally set quiescent flag.
         android::base::SetProperty(ANDROID_RB_PROPERTY, "shutdown,");
         break;
 
@@ -478,6 +480,32 @@ int main(int argc, char** argv) {
         ui->Print("Rebooting to bootloader...\n");
         android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,bootloader");
         break;
+
+      case Device::REBOOT_FASTBOOT:
+        ui->Print("Rebooting to recovery/fastboot...\n");
+        android::base::SetProperty(ANDROID_RB_PROPERTY, "reboot,fastboot");
+        break;
+
+      case Device::REBOOT_RECOVERY:
+        ui->Print("Rebooting to recovery...\n");
+        reboot("reboot,recovery");
+        break;
+
+      case Device::REBOOT_RESCUE: {
+        // Not using `reboot("reboot,rescue")`, as it requires matching support in kernel and/or
+        // bootloader.
+        bootloader_message boot = {};
+        strlcpy(boot.command, "boot-rescue", sizeof(boot.command));
+        std::string err;
+        if (!write_bootloader_message(boot, &err)) {
+          LOG(ERROR) << "Failed to write bootloader message: " << err;
+          // Stay under recovery on failure.
+          continue;
+        }
+        ui->Print("Rebooting to recovery/rescue...\n");
+        reboot("reboot,recovery");
+        break;
+      }
 
       case Device::ENTER_FASTBOOT:
         if (logical_partitions_mapped()) {

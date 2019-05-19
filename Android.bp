@@ -26,77 +26,6 @@ cc_defaults {
     ],
 }
 
-cc_library {
-    name: "librecovery_ui",
-    recovery_available: true,
-
-    defaults: [
-        "recovery_defaults",
-    ],
-
-    srcs: [
-        "device.cpp",
-        "screen_ui.cpp",
-        "ui.cpp",
-        "vr_ui.cpp",
-        "wear_ui.cpp"
-    ],
-
-    static_libs: [
-        "libminui",
-        "libotautil",
-        "libfstab",
-    ],
-
-    shared_libs: [
-        "libbase",
-        "libpng",
-        "libz",
-    ],
-}
-
-// Generic device that uses ScreenRecoveryUI.
-cc_library_static {
-    name: "librecovery_ui_default",
-    recovery_available: true,
-
-    defaults: [
-        "recovery_defaults",
-    ],
-
-    srcs: [
-        "default_device.cpp",
-    ],
-}
-
-// The default wear device that uses WearRecoveryUI.
-cc_library_static {
-    name: "librecovery_ui_wear",
-    recovery_available: true,
-
-    defaults: [
-        "recovery_defaults",
-    ],
-
-    srcs: [
-        "wear_device.cpp",
-    ],
-}
-
-// The default VR device that uses VrRecoveryUI.
-cc_library_static {
-    name: "librecovery_ui_vr",
-    recovery_available: true,
-
-    defaults: [
-        "recovery_defaults",
-    ],
-
-    srcs: [
-        "vr_device.cpp",
-    ],
-}
-
 cc_library_static {
     name: "librecovery_fastboot",
     recovery_available: true,
@@ -113,6 +42,7 @@ cc_library_static {
         "libbootloader_message",
         "libcutils",
         "liblog",
+        "librecovery_ui",
     ],
 
     static_libs: [
@@ -133,31 +63,19 @@ cc_defaults {
         "libbootloader_message",
         "libcrypto",
         "libcutils",
-        "libext4_utils",
         "libfs_mgr",
-        "libfusesideload",
-        "libhidl-gen-utils",
-        "libhidlbase",
-        "libhidltransport",
         "liblog",
-        "libpng",
-        "libselinux",
-        "libtinyxml2",
-        "libutils",
-        "libz",
         "libziparchive",
     ],
 
     static_libs: [
+        "libinstall",
         "librecovery_fastboot",
         "libminui",
-        "libverifier",
         "libotautil",
 
         // external dependencies
         "libhealthhalutils",
-        "libvintf_recovery",
-        "libvintf",
         "libfstab",
     ],
 }
@@ -171,41 +89,12 @@ cc_library_static {
     ],
 
     srcs: [
-        "adb_install.cpp",
         "fsck_unshare_blocks.cpp",
-        "fuse_sdcard_provider.cpp",
-        "install.cpp",
         "recovery.cpp",
-        "roots.cpp",
-    ],
-
-    include_dirs: [
-        "system/vold",
-    ],
-}
-
-cc_library_static {
-    name: "libverifier",
-    recovery_available: true,
-
-    defaults: [
-        "recovery_defaults",
-    ],
-
-    srcs: [
-        "asn1_decoder.cpp",
-        "verifier.cpp",
     ],
 
     shared_libs: [
-        "libbase",
-        "libcrypto",
-        "libcrypto_utils",
-        "libziparchive",
-    ],
-
-    static_libs: [
-        "libotautil",
+        "librecovery_ui",
     ],
 }
 
@@ -214,16 +103,15 @@ cc_binary {
     recovery: true,
 
     defaults: [
+        "libinstall_defaults",
         "librecovery_defaults",
     ],
 
     srcs: [
-        "logging.cpp",
         "recovery_main.cpp",
     ],
 
     shared_libs: [
-        "libminadbd_services",
         "librecovery_ui",
     ],
 
@@ -235,6 +123,7 @@ cc_binary {
     required: [
         "e2fsdroid.recovery",
         "librecovery_ui_ext",
+        "minadbd",
         "mke2fs.conf.recovery",
         "mke2fs.recovery",
         "recovery_deps",
@@ -250,7 +139,6 @@ cc_binary {
     ],
 
     srcs: [
-        "logging.cpp",
         "recovery-persist.cpp",
     ],
 
@@ -279,7 +167,6 @@ cc_binary {
     ],
 
     srcs: [
-        "logging.cpp",
         "recovery-refresh.cpp",
     ],
 

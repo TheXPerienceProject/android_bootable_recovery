@@ -32,9 +32,9 @@
 #include <ziparchive/zip_archive.h>
 #include <ziparchive/zip_writer.h>
 
-#include "install.h"
+#include "install/install.h"
 #include "otautil/paths.h"
-#include "private/install.h"
+#include "private/setup_commands.h"
 
 static void BuildZipArchive(const std::map<std::string, std::string>& file_map, int fd,
                             int compression_type) {
@@ -105,6 +105,32 @@ TEST(InstallTest, read_metadata_from_package_no_entry) {
   std::map<std::string, std::string> metadata;
   ASSERT_FALSE(ReadMetadataFromPackage(zip, &metadata));
   CloseArchive(zip);
+}
+
+TEST(InstallTest, read_wipe_ab_partition_list) {
+  std::vector<std::string> partition_list = {
+    "/dev/block/bootdevice/by-name/system_a", "/dev/block/bootdevice/by-name/system_b",
+    "/dev/block/bootdevice/by-name/vendor_a", "/dev/block/bootdevice/by-name/vendor_b",
+    "/dev/block/bootdevice/by-name/userdata", "# Wipe the boot partitions last",
+    "/dev/block/bootdevice/by-name/boot_a",   "/dev/block/bootdevice/by-name/boot_b",
+  };
+  TemporaryFile temp_file;
+  BuildZipArchive({ { "recovery.wipe", android::base::Join(partition_list, '\n') } },
+                  temp_file.release(), kCompressDeflated);
+  std::string wipe_package;
+  ASSERT_TRUE(android::base::ReadFileToString(temp_file.path, &wipe_package));
+
+  auto package = Package::CreateMemoryPackage(
+      std::vector<uint8_t>(wipe_package.begin(), wipe_package.end()), nullptr);
+
+  auto read_partition_list = GetWipePartitionList(package.get());
+  std::vector<std::string> expected = {
+    "/dev/block/bootdevice/by-name/system_a", "/dev/block/bootdevice/by-name/system_b",
+    "/dev/block/bootdevice/by-name/vendor_a", "/dev/block/bootdevice/by-name/vendor_b",
+    "/dev/block/bootdevice/by-name/userdata", "/dev/block/bootdevice/by-name/boot_a",
+    "/dev/block/bootdevice/by-name/boot_b",
+  };
+  ASSERT_EQ(expected, read_partition_list);
 }
 
 TEST(InstallTest, verify_package_compatibility_with_libvintf_malformed_xml) {
