@@ -41,7 +41,8 @@
 
 #define UFS_DEV_SDCARD_BLK_PATH "/dev/block/mmcblk0p1"
 
-static constexpr const char* SDCARD_ROOT = "/sdcard";
+//static constexpr const char* SDCARD_ROOT = "/sdcard";
+static constexpr const char* SDCARD_ROOT = "/data/media/0";
 // How long (in seconds) we wait for the fuse-provided package file to
 // appear, before timing out.
 static constexpr int SDCARD_INSTALL_TIMEOUT = 10;
