@@ -577,7 +577,9 @@ void ScreenRecoveryUI::draw_foreground_locked() {
 }
 
 /* recovery dark:  #7C4DFF
+   recovery dxpe:  #9c091d
    recovery light: #F890FF
+   recovery lxpe:  #752229
    fastbootd dark: #E65100
    fastboot light: #FDD835 */
 void ScreenRecoveryUI::SetColor(UIElement e) const {
@@ -589,7 +591,10 @@ void ScreenRecoveryUI::SetColor(UIElement e) const {
         gr_color(0xc7, 0x15, 0x85, 255);
       break;
     case UIElement::INFO:
-      gr_color(0x18, 0x63, 0x78, 255); // Set INFO color to #186378
+      if (fastbootd_logo_enabled_)
+        gr_color(0xfd, 0xd8, 0x35, 255);
+      else
+        gr_color(0x75, 0x22, 0x29, 255);
       break;
     case UIElement::HEADER:
       if (fastbootd_logo_enabled_)
@@ -602,7 +607,10 @@ void ScreenRecoveryUI::SetColor(UIElement e) const {
       break;
     case UIElement::MENU_SEL_BG:
     case UIElement::SCROLLBAR:
-      gr_color(0x19, 0xA7, 0xCE, 255);
+      if (fastbootd_logo_enabled_)
+        gr_color(0xe6, 0x51, 0x00, 255);
+      else
+        gr_color(0x9c, 0x09, 0x1d, 255);
       break;
     case UIElement::MENU_SEL_BG_ACTIVE:
       gr_color(164, 185, 228, 255);
