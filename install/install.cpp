@@ -148,7 +148,7 @@ static void ReadSourceTargetBuild(const std::map<std::string, std::string>& meta
 // Downgrading is not allowed unless explicitly enabled in the package and only for
 // incremental packages.
 static bool CheckAbSpecificMetadata(const std::map<std::string, std::string>& metadata,
-                                    RecoveryUI* ui) {
+                                  [[maybe_unused]] RecoveryUI* ui) {
   // Incremental updates should match the current build.
   auto device_pre_build = android::base::GetProperty("ro.build.version.incremental", "");
   auto pkg_pre_build = get_value(metadata, "pre-build-incremental");
