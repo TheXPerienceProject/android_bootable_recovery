@@ -350,7 +350,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   }
 
   int MenuItemSpacing() const override {
-    return 8;
+    return std::max(8, PixelsFromDp(8));
   }
 
  protected:
@@ -455,7 +455,7 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
     return menu_char_width_;
   }
   int MenuItemPadding() const override {
-    return menu_char_height_;
+    return std::max(menu_char_height_ * 3 / 4, PixelsFromDp(14));
   }
 
   std::unique_ptr<MenuDrawFunctions> menu_draw_funcs_;
@@ -553,6 +553,19 @@ class ScreenRecoveryUI : public RecoveryUI, public DrawInterface {
   // Display the background texts for "erasing", "error", "no_command" and "installing" for the
   // selected locale.
   void SelectAndShowBackgroundText(const std::vector<std::string>& locales_entries, size_t sel);
+
+  void draw_top_status_bar_locked(int outer_pad, int top_y) const;
+  void draw_modern_progress_bar_locked(int x, int y, int width, int height) const;
+  void draw_install_overlay_locked(int outer_pad, int y_start, int* out_next_y) const;
+
+  mutable UIElement current_element_ = UIElement::MENU;
+  mutable int back_btn_x_ = 0;
+  mutable int back_btn_y_ = 0;
+  mutable int back_btn_w_ = 0;
+  mutable int back_btn_h_ = 0;
+  mutable int batt_pill_y_ = 0;
+  mutable int batt_pill_h_ = 0;
+  float install_anim_phase_ = 0.0f;
 
 };
 

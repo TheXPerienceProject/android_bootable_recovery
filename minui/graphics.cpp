@@ -22,6 +22,7 @@
 #include <string.h>
 
 #include <algorithm>
+#include <cmath>
 #include <memory>
 
 #include <android-base/properties.h>
@@ -328,6 +329,147 @@ void gr_fill(int x1, int y1, int x2, int y2) {
       incr_x(&px, row_pixels);
     }
     incr_y(&p, row_pixels);
+  }
+}
+
+static inline void blend_pixel_xy(int lx, int ly, uint8_t coverage, int row_pixels) {
+  if (coverage == 0 || outside(lx, ly)) return;
+  uint32_t* px = PixelAt(gr_draw, lx, ly, row_pixels);
+  uint8_t base_alpha = get_alpha(gr_current);
+  uint8_t alpha = static_cast<uint8_t>((static_cast<uint32_t>(base_alpha) * coverage) / 255);
+  if (alpha == 0) return;
+  *px = (alpha == 255) ? gr_current : pixel_blend(alpha, *px);
+}
+
+void gr_fill_rounded(int x1, int y1, int x2, int y2, int radius) {
+  if (x2 <= x1 || y2 <= y1) return;
+  const int w = x2 - x1;
+  const int h = y2 - y1;
+  int r = std::max(0, std::min(radius, std::min(w, h) / 2));
+  if (r <= 1) {
+    gr_fill(x1, y1, x2, y2);
+    return;
+  }
+
+  x1 += overscan_offset_x;
+  y1 += overscan_offset_y;
+  x2 += overscan_offset_x;
+  y2 += overscan_offset_y;
+
+  const bool swapped = (rotation == GRRotation::LEFT || rotation == GRRotation::RIGHT);
+  const int fb_w = swapped ? gr_draw->height : gr_draw->width;
+  const int fb_h = swapped ? gr_draw->width : gr_draw->height;
+  const int row_pixels = gr_draw->row_bytes / gr_draw->pixel_bytes;
+  if (get_alpha(gr_current) == 0) return;
+
+  // Fast interior vertical span (between top and bottom rounded caps)
+  const int mid_y1 = std::max(0, y1 + r);
+  const int mid_y2 = std::min(fb_h, y2 - r);
+  const int clip_x1 = std::max(0, x1);
+  const int clip_x2 = std::min(fb_w, x2);
+  if (mid_y1 < mid_y2 && clip_x1 < clip_x2) {
+    gr_fill(clip_x1 - overscan_offset_x, mid_y1 - overscan_offset_y,
+            clip_x2 - overscan_offset_x, mid_y2 - overscan_offset_y);
+  }
+
+  // Horizontal flat strips between corner arcs
+  const int inner_x1 = std::max(0, x1 + r);
+  const int inner_x2 = std::min(fb_w, x2 - r);
+  if (inner_x1 < inner_x2) {
+    if (std::max(0, y1) < mid_y1) {
+      gr_fill(inner_x1 - overscan_offset_x, std::max(0, y1) - overscan_offset_y,
+              inner_x2 - overscan_offset_x, mid_y1 - overscan_offset_y);
+    }
+    if (mid_y2 < std::min(fb_h, y2)) {
+      gr_fill(inner_x1 - overscan_offset_x, mid_y2 - overscan_offset_y,
+              inner_x2 - overscan_offset_x, std::min(fb_h, y2) - overscan_offset_y);
+    }
+  }
+
+  // Anti-aliased 4 corners using circle signed distance
+  const float rf = static_cast<float>(r);
+  for (int dy = 0; dy < r; ++dy) {
+    const float cy_dist = (r - 0.5f) - static_cast<float>(dy);
+    for (int dx = 0; dx < r; ++dx) {
+      const float cx_dist = (r - 0.5f) - static_cast<float>(dx);
+      const float dist = std::sqrt(cx_dist * cx_dist + cy_dist * cy_dist);
+      if (dist > rf + 0.5f) continue;
+      uint8_t cov = 255;
+      if (dist > rf - 0.5f) {
+        cov = static_cast<uint8_t>(std::clamp((rf + 0.5f - dist) * 255.0f, 0.0f, 255.0f));
+      }
+      blend_pixel_xy(x1 + dx, y1 + dy, cov, row_pixels);
+      blend_pixel_xy(x2 - 1 - dx, y1 + dy, cov, row_pixels);
+      blend_pixel_xy(x1 + dx, y2 - 1 - dy, cov, row_pixels);
+      blend_pixel_xy(x2 - 1 - dx, y2 - 1 - dy, cov, row_pixels);
+    }
+  }
+}
+
+void gr_stroke_rounded(int x1, int y1, int x2, int y2, int radius, int thickness) {
+  if (x2 <= x1 || y2 <= y1 || thickness <= 0) return;
+  const int w = x2 - x1;
+  const int h = y2 - y1;
+  const int t = std::min(thickness, std::min(w, h) / 2);
+  if (t <= 0) return;
+  int r = std::max(t, std::min(radius, std::min(w, h) / 2));
+
+  x1 += overscan_offset_x;
+  y1 += overscan_offset_y;
+  x2 += overscan_offset_x;
+  y2 += overscan_offset_y;
+
+  const bool swapped = (rotation == GRRotation::LEFT || rotation == GRRotation::RIGHT);
+  const int fb_w = swapped ? gr_draw->height : gr_draw->width;
+  const int fb_h = swapped ? gr_draw->width : gr_draw->height;
+  const int row_pixels = gr_draw->row_bytes / gr_draw->pixel_bytes;
+  if (get_alpha(gr_current) == 0) return;
+
+  // Straight top/bottom border edges between corners
+  const int hx1 = std::max(0, x1 + r);
+  const int hx2 = std::min(fb_w, x2 - r);
+  if (hx1 < hx2) {
+    if (std::max(0, y1) < std::min(fb_h, y1 + t)) {
+      gr_fill(hx1 - overscan_offset_x, std::max(0, y1) - overscan_offset_y,
+              hx2 - overscan_offset_x, std::min(fb_h, y1 + t) - overscan_offset_y);
+    }
+    if (std::max(0, y2 - t) < std::min(fb_h, y2)) {
+      gr_fill(hx1 - overscan_offset_x, std::max(0, y2 - t) - overscan_offset_y,
+              hx2 - overscan_offset_x, std::min(fb_h, y2) - overscan_offset_y);
+    }
+  }
+
+  // Straight left/right border edges between corners
+  const int vy1 = std::max(0, y1 + r);
+  const int vy2 = std::min(fb_h, y2 - r);
+  if (vy1 < vy2) {
+    if (std::max(0, x1) < std::min(fb_w, x1 + t)) {
+      gr_fill(std::max(0, x1) - overscan_offset_x, vy1 - overscan_offset_y,
+              std::min(fb_w, x1 + t) - overscan_offset_x, vy2 - overscan_offset_y);
+    }
+    if (std::max(0, x2 - t) < std::min(fb_w, x2)) {
+      gr_fill(std::max(0, x2 - t) - overscan_offset_x, vy1 - overscan_offset_y,
+              std::min(fb_w, x2) - overscan_offset_x, vy2 - overscan_offset_y);
+    }
+  }
+
+  // Anti-aliased corner arc bands
+  const float r_outer = static_cast<float>(r);
+  const float r_inner = static_cast<float>(r - t);
+  for (int dy = 0; dy < r; ++dy) {
+    const float cy_dist = (r - 0.5f) - static_cast<float>(dy);
+    for (int dx = 0; dx < r; ++dx) {
+      const float cx_dist = (r - 0.5f) - static_cast<float>(dx);
+      const float dist = std::sqrt(cx_dist * cx_dist + cy_dist * cy_dist);
+      if (dist > r_outer + 0.5f || dist < r_inner - 0.5f) continue;
+      float outer_cov = std::clamp(r_outer + 0.5f - dist, 0.0f, 1.0f);
+      float inner_cov = std::clamp(dist - (r_inner - 0.5f), 0.0f, 1.0f);
+      uint8_t cov = static_cast<uint8_t>(std::min(outer_cov, inner_cov) * 255.0f);
+      blend_pixel_xy(x1 + dx, y1 + dy, cov, row_pixels);
+      blend_pixel_xy(x2 - 1 - dx, y1 + dy, cov, row_pixels);
+      blend_pixel_xy(x1 + dx, y2 - 1 - dy, cov, row_pixels);
+      blend_pixel_xy(x2 - 1 - dx, y2 - 1 - dy, cov, row_pixels);
+    }
   }
 }
 
